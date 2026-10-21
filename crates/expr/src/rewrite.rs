@@ -666,11 +666,18 @@ fn substitutions(template: &str) -> Vec<String> {
 /// use, summing brackets, runs of prefix operators and, per bracket level, the chains of the
 /// current statement (or array element) weighted by what each link costs the parser.
 fn too_nested(toks: &[Tok]) -> bool {
-    too_nested_from(toks, 0)
+    too_nested_from(toks, 0, MAX_NESTING)
 }
 
-/// [`too_nested`] for code that already sits `base` deep (a template substitution).
-fn too_nested_from(toks: &[Tok], base: usize) -> bool {
+/// Whether `code` nests deeper than `levels` levels of brackets by [`too_nested`]'s estimate,
+/// without the expression rewrite: for other JavaScript run on a bigger stack (scripts).
+pub fn nests_deeper_than(code: &str, levels: usize) -> bool {
+    too_nested_from(&tokenize(code).0, 0, levels)
+}
+
+/// [`too_nested`] for code that already sits `base` deep (a template substitution), with a
+/// budget of `levels` levels.
+fn too_nested_from(toks: &[Tok], base: usize, levels_max: usize) -> bool {
     let mut levels = vec![Level::default()];
     let mut prefix = 0usize;
     let mut prev: Option<&Tok> = None;
@@ -726,7 +733,7 @@ fn too_nested_from(toks: &[Tok], base: usize) -> bool {
         for l in &levels {
             cost = cost.saturating_add(l.chain).saturating_add(l.elses.saturating_mul(HEAVY));
         }
-        if cost > MAX_NESTING * LEVEL {
+        if cost > levels_max.saturating_mul(LEVEL) {
             return true;
         }
         // The code inside `${…}` is parsed like any other, one level deeper (the depth check
@@ -735,7 +742,7 @@ fn too_nested_from(toks: &[Tok], base: usize) -> bool {
             && t.text.contains("${")
             && substitutions(&t.text)
                 .iter()
-                .any(|sub| too_nested_from(&tokenize(sub).0, cost.saturating_sub(inner.saturating_mul(LEVEL)).saturating_add(LEVEL)))
+                .any(|sub| too_nested_from(&tokenize(sub).0, cost.saturating_sub(inner.saturating_mul(LEVEL)).saturating_add(LEVEL), levels_max))
         {
             return true;
         }
